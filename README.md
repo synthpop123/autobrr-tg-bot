@@ -30,5 +30,5 @@ TELEGRAM_CHANNEL_ID=your_telegram_channel_id
 ### Add this to Autobrr filter Exec section
 
 ```bash
-/path/to/autobrr/scripts/notify.sh "{{.TorrentName}}" "{{.FilterName}}" "{{.Group}}" "{{.ReleaseYear}}" "{{.ParsedTitle}}" "{{.SizeString}}"
+/path/to/autobrr/scripts/notify.sh "{{.TorrentName}}" "{{.FilterName}}" "{{.Group}}" "{{.Year}}" "{{.Title}}" "{{.SizeString}}"
 ```

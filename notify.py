@@ -41,6 +41,10 @@ class RELEASE:
         movie = Movie()
         return movie.credits(tmdb_id).crew
 
+    def get_fallback_en_overview(self, tmdb_id):
+        movie = Movie()
+        return movie.translations(tmdb_id).en.overview
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--torrent_name", type=str, required=True)
@@ -83,37 +87,55 @@ def format_director(crew):
     return ", ".join(director_list)
 
 
-def organize_message(language, title, year, overview=None, genre_list=None, tmdb_id=None, tmdb_url=None, torrent_name=None, indexer_name=None, group_name=None, file_size=None, starring=None, director=None):    
-    genres = ", ".join(genre_list)
+def organize_message(language, title, year, overview=None, genre_list=None, tmdb_id=None, tmdb_url=None, torrent_name=None, indexer_name=None, group_name=None, file_size=None, starring=None, director=None):
+    content_parts = []
+    
     if language == "zh-CN":
-        content = f"""\\#{indexer_name}
-
-*电影名称*：{title} \\({year}\\)
-*导演*：{format_message(director)}
-*演员*：{format_message(starring)}
-*类型*：{genres}
-*资源名称*：__{format_message(torrent_name)}__
-*组名*：{group_name}
-*文件大小*：{format_message(file_size)}
-*TMDB ID*：[{tmdb_id}]({tmdb_url})
-*剧情简介*：
-> {format_message(overview)}
-"""
-    else:
-        content = f"""\\#{indexer_name}
+        content_parts.append(f"\\#{indexer_name}\n")
         
-*Movie Name*：{title} \\({year}\\)
-*Director*：{format_message(director)}
-*Starring*：{format_message(starring)}
-*Genres*：{genres}
-*Torrent Name*：__{format_message(torrent_name)}__
-*Group Name*：{group_name}
-*File Size*：{format_message(file_size)}
-*TMDB ID*：[{tmdb_id}]({tmdb_url})
-*Overview*：
-> {format_message(overview)}
-"""
-    return content
+        if title and year:
+            content_parts.append(f"*电影名称*：{title} \\({year}\\)")
+        if director:
+            content_parts.append(f"*导演*：{format_message(director)}")
+        if starring:
+            content_parts.append(f"*演员*：{format_message(starring)}")
+        if genre_list:
+            genres = ", ".join(genre_list)
+            content_parts.append(f"*类型*：{genres}")
+        if torrent_name:
+            content_parts.append(f"*资源名称*：__{format_message(torrent_name)}__")
+        if group_name:
+            content_parts.append(f"*组名*：{group_name}")
+        if file_size:
+            content_parts.append(f"*文件大小*：{format_message(file_size)}")
+        if tmdb_id and tmdb_url:
+            content_parts.append(f"*TMDB ID*：[{tmdb_id}]({tmdb_url})")
+        if overview:
+            content_parts.append(f"*剧情简介*：\n> {format_message(overview)}")
+    else:
+        content_parts.append(f"\\#{indexer_name}\n")
+        
+        if title and year:
+            content_parts.append(f"*Movie Name*：{title} \\({year}\\)")
+        if director:
+            content_parts.append(f"*Director*：{format_message(director)}")
+        if starring:
+            content_parts.append(f"*Starring*：{format_message(starring)}")
+        if genre_list:
+            genres = ", ".join(genre_list)
+            content_parts.append(f"*Genres*：{genres}")
+        if torrent_name:
+            content_parts.append(f"*Torrent Name*：__{format_message(torrent_name)}__")
+        if group_name:
+            content_parts.append(f"*Group Name*：{group_name}")
+        if file_size:
+            content_parts.append(f"*File Size*：{format_message(file_size)}")
+        if tmdb_id and tmdb_url:
+            content_parts.append(f"*TMDB ID*：[{tmdb_id}]({tmdb_url})")
+        if overview:
+            content_parts.append(f"*Overview*：\n> {format_message(overview)}")
+
+    return "\n".join(content_parts)
 
 
 def send_message(message, bot_token, channel_id):
@@ -127,7 +149,7 @@ def send_message(message, bot_token, channel_id):
             "show_above_text": True
         })
     }
-    print(url, params)
+    # print(url, params)
     response = requests.get(url, params=params)
     print(response.json())
 
@@ -138,7 +160,8 @@ def main():
     args = parse_args()
 
     release = RELEASE(env)
-    
+
+    language = release.tmdb.language
     results = release.search_movie(args.parsed_title)
     tmdb_id = results[0].id
     details = release.get_movie_details(tmdb_id)
@@ -167,8 +190,14 @@ def main():
         starring = format_starring(cast)
         director = format_director(crew)
 
+        if not overview:
+            relese_en = RELEASE(env)
+            relese_en.tmdb.language = "en_US"
+            details_en = relese_en.get_movie_details(tmdb_id)
+            overview = details_en.overview
+
     notify_message = organize_message(
-        language=release.tmdb.language,
+        language=language,
         title=title,
         year=year,
         overview=overview,
