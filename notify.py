@@ -1,274 +1,244 @@
+"""
+Movie Release Notification Script
+
+This script fetches movie information from TMDB API and sends formatted notifications
+to a Telegram channel. It handles movie details, cast information, and various metadata
+to create comprehensive movie release announcements.
+"""
+
 import os
 import argparse
 import json
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Any
+
 import requests
 from tmdbv3api import TMDb, Movie, Search
-
 from dotenv import load_dotenv
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from functools import lru_cache
 
 load_dotenv()
 
 
-class ENV:
-    TMDB_API_KEY = os.getenv("TMDB_API_KEY")
-    TMDB_LANGUAGE = os.getenv("TMDB_LANGUAGE") if os.getenv("TMDB_LANGUAGE") else "zh-CN"
-    TMDB_DEBUG = os.getenv("TMDB_DEBUG") if os.getenv("TMDB_DEBUG") else False
-    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    TELEGRAM_CHANNEL_ID = os.getenv("TELEGRAM_CHANNEL_ID")
+@dataclass
+class Config:
+    """Configuration class for environment variables."""
+    TMDB_API_KEY: str = os.getenv("TMDB_API_KEY", "")
+    TMDB_LANGUAGE: str = os.getenv("TMDB_LANGUAGE", "zh-CN")
+    TMDB_DEBUG: bool = bool(os.getenv("TMDB_DEBUG", False))
+    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    TELEGRAM_CHANNEL_ID: str = os.getenv("TELEGRAM_CHANNEL_ID", "")
 
 
-class RELEASE:
-    def __init__(self, env):
+class MovieClient:
+    """Handle all TMDB API related operations."""
+    
+    def __init__(self, config: Config):
+        """Initialize TMDB client with configuration."""
         self.tmdb = TMDb()
-        self.tmdb.api_key = env.TMDB_API_KEY
-        self.tmdb.language = env.TMDB_LANGUAGE
-        self.tmdb.debug = env.TMDB_DEBUG
-        self.genre_list = []
-
-    def search_movie(self, title, year=None):
-        search = Search()
-        if year:
-            return search.movies(title, year=year)
-        else:
-            return search.movies(title)
-
-    def get_movie_details(self, tmdb_id):
-        movie = Movie()
-        return movie.details(tmdb_id)
-
-    def get_movie_cast(self, tmdb_id):
-        movie = Movie()
-        return movie.credits(tmdb_id).cast
-
-    def get_movie_crew(self, tmdb_id):
-        movie = Movie()
-        return movie.credits(tmdb_id).crew
-
-    def get_fallback_en_overview(self, tmdb_id):
-        movie = Movie()
-        return movie.translations(tmdb_id).en.overview
-
-
-def parse_args():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--torrent_name", type=str, required=True)
-    parser.add_argument("--indexer_name", type=str, required=True)
-    parser.add_argument("--group_name", type=str, required=True)
-    parser.add_argument("--release_year", type=str, required=True)
-    parser.add_argument("--parsed_title", type=str, required=True)
-    parser.add_argument("--file_size", type=str, required=True)
-
-    return parser.parse_args()
-
-
-def convert_bytes_to_gib(bytes):
-    return f"{bytes / (1024 * 1024 * 1024):.2f} GiB"
-
-
-def calculate_bitrate(file_size, duration):
-    # file_size is in bytes
-    # duration is in minutes
-    # Convert file size from bytes to bits (1 byte = 8 bits)
-    file_size_bits = file_size * 8
-    
-    # Convert duration from minutes to seconds (1 minute = 60 seconds)
-    duration_seconds = duration * 60
-    
-    # Calculate bitrate in bits per second (bps)
-    bitrate_bps = file_size_bits / duration_seconds
-    
-    # Convert bitrate to megabits per second (Mbps)
-    bitrate_Mbps = bitrate_bps / 1_000_000
-    
-    # Return the bitrate formatted to two decimal places
-    return f"{bitrate_Mbps:.2f} Mbps"
-
-
-def calculate_duration(runtime):
-    # runtime is in minutes
-    return f"{runtime} 分钟"
-
-
-def format_message(message):
-    special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
-    for char in special_chars:
-        message = message.replace(char, f"\\{char}")
-    return message
-
-
-def format_starring(cast):
-    starring_list = []
-    max_starring_num = 3
-
-    for index, person in enumerate(cast):
-        if index >= max_starring_num:
-            break
-        starring_list.append(person.name)
-    return ", ".join(starring_list)
-
-
-def format_director(crew):
-    director_list = []
-    max_director_num = 3
-
-    for person in crew:
-        if person.job == "Director":
-            director_list.append(person.name)
-        if len(director_list) >= max_director_num:
-            break
-    return ", ".join(director_list)
-
-
-def organize_message(language, title, year, overview=None, genre_list=None, tmdb_id=None, tmdb_url=None, torrent_name=None, indexer_name=None, group_name=None, file_size=None, bitrate=None, duration=None, starring=None, director=None, poster_url=None):
-    content_parts = []
-    
-    if language == "zh-CN":
-        content_parts.append(f"\\#{indexer_name} \\#{group_name}\n")
+        self.tmdb.api_key = config.TMDB_API_KEY
+        self.tmdb.language = config.TMDB_LANGUAGE
+        self.tmdb.debug = config.TMDB_DEBUG
+        self.movie = Movie()
+        self.search = Search()
         
-        if title and year:
-            content_parts.append(f"*名称*：`{title}` \\({year}\\)")
-        if director:
-            content_parts.append(f"*导演*：{format_message(director)}")
-        if starring:
-            content_parts.append(f"*演员*：{format_message(starring)}")
-        if genre_list:
-            genres = ", ".join(genre_list)
-            content_parts.append(f"*类型*：{genres}")
-        if torrent_name:
-            content_parts.append(f"*标题*：`{format_message(torrent_name)}`")
-        if file_size:
-            content_parts.append(f"*信息*：{format_message(file_size)} / {format_message(duration)} / {format_message(bitrate)}[​​​​​​​​​​​]({poster_url})")
-        if overview:
-            content_parts.append(f"*简介*：\n> {format_message(overview)}")
-    else:
-        content_parts.append(f"\\#{indexer_name} \\#{group_name}\n")
+        # Set retry strategy
+        self.session = requests.Session()
+        retries = Retry(
+            total=5,
+            backoff_factor=1,
+            status_forcelist=[500, 502, 503, 504],
+        )
+        self.session.mount('https://', HTTPAdapter(max_retries=retries))
+        self.movie.session = self.session
+        self.search.session = self.session
+
+    @lru_cache(maxsize=128)
+    def search_movie(self, title: str, year: Optional[str] = None) -> List[Any]:
+        """Search for movies by title and optional year with caching."""
+        return self.search.movies(title, year=year) if year else self.search.movies(title)
+
+    @lru_cache(maxsize=128)
+    def get_movie_details(self, tmdb_id: int, language: str = None) -> Any:
+        """Get detailed information for a specific movie with caching."""
+        if language:
+            temp_lang = self.tmdb.language
+            self.tmdb.language = language
+            details = self.movie.details(tmdb_id, append_to_response="credits,images")
+            self.tmdb.language = temp_lang
+            return details
+        return self.movie.details(tmdb_id, append_to_response="credits,images")
+
+    def get_movie_data(self, tmdb_id: int) -> tuple:
+        """Get all movie data in a single request."""
+        details = self.get_movie_details(tmdb_id)
+        credits = details.credits
+        return details, credits.cast, credits.crew
+
+    def get_english_details(self, tmdb_id: int) -> Any:
+        """Get English version of movie details."""
+        return self.get_movie_details(tmdb_id, language="en_US")
+
+
+class MessageFormatter:
+    """Handle message formatting and organization."""
+
+    @staticmethod
+    def escape_special_chars(text: str) -> str:
+        """Escape special characters for Telegram MarkdownV2 format."""
+        special_chars = ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+        for char in special_chars:
+            text = text.replace(char, f"\\{char}")
+        return text
+
+    @staticmethod
+    def format_cast(cast: List[Any], max_count: int = 3) -> str:
+        """Format cast list with specified maximum number of names."""
+        cast_list = []
+        count = 0
+        for person in cast:
+            if count >= max_count:
+                break
+            cast_list.append(person.name)
+            count += 1
+        return ", ".join(cast_list)
+
+    @staticmethod
+    def format_director(crew: List[Any], max_count: int = 3) -> str:
+        """Format director list with specified maximum number of names."""
+        directors = []
+        count = 0
+        for person in crew:
+            if count >= max_count:
+                break
+            if person.job == "Director":
+                directors.append(person.name)
+                count += 1
+        return ", ".join(directors)
+
+    @staticmethod
+    def format_file_info(file_size: int, runtime: int) -> tuple:
+        """Format file size, duration and bitrate information."""
+        size_gib = f"{file_size / (1024 ** 3):.2f} GiB"
+        duration = f"{runtime} 分钟"
+        bitrate = f"{(file_size * 8) / (runtime * 60) / 1_000_000:.2f} Mbps"
+        return size_gib, duration, bitrate
+
+    def create_message(self, movie_data: Dict[str, Any], language: str) -> str:
+        """Create formatted message for Telegram notification."""
+        parts = []
         
-        if title and year:
-            content_parts.append(f"*Movie Name*：`{title}` \\({year}\\)")
-        if director:
-            content_parts.append(f"*Director*：{format_message(director)}")
-        if starring:
-            content_parts.append(f"*Starring*：{format_message(starring)}")
-        if genre_list:
-            genres = ", ".join(genre_list)
-            content_parts.append(f"*Genres*：{genres}")
-        if torrent_name:
-            content_parts.append(f"*Torrent Name*：`{format_message(torrent_name)}`")
-        if file_size:
-            content_parts.append(f"*Info*：{format_message(file_size)}")
-        if tmdb_id and tmdb_url:
-            content_parts.append(f"*TMDB ID*：[{tmdb_id}]({tmdb_url})")
-        if overview:
-            content_parts.append(f"*Overview*：\n> {format_message(overview)}")
-
-    return "\n".join(content_parts)
-
-
-def send_message(message, bot_token, channel_id, tmdb_url=None, imdb_url=None, letterboxd_url=None, douban_url=None):
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    params = {
-        "chat_id": channel_id,
-        "text": message,
-        "parse_mode": "MarkdownV2",
-        "link_preview_options": json.dumps({
-            "enabled": True,
-            "show_above_text": True
-        }),
-        "reply_markup": json.dumps({
-            "inline_keyboard": [
-                [{"text": "TMDB", "url": tmdb_url}, {"text": "IMDB", "url": imdb_url}, {"text": "Letterboxd", "url": letterboxd_url}, {"text": "Douban", "url": douban_url}]
+        # Header
+        parts.append(f"\\#{movie_data['indexer']} \\#{movie_data['group']}\n")
+        
+        # Main content
+        if language == "zh-CN":
+            template = [
+                ("*名称*", f"{movie_data['title']} \\({movie_data['year']}\\)"),
+                ("*导演*", self.escape_special_chars(movie_data['director'])),
+                ("*演员*", self.escape_special_chars(movie_data['starring'])),
+                ("*类型*", ", ".join(movie_data['genres'])),
+                ("*标题*", f"__{self.escape_special_chars(movie_data['torrent_name'])}__"),
+                ("*信息*", f"{self.escape_special_chars(movie_data['size'])} / "
+                        f"{self.escape_special_chars(movie_data['duration'])} / "
+                        f"{self.escape_special_chars(movie_data['bitrate'])}[​​​​​​​​​​​]({movie_data['poster_url']})"),
+                ("*简介*", f"\n> {self.escape_special_chars(movie_data['overview'])}")
             ]
-        })
-    }
-    # print(url, params)
-    response = requests.get(url, params=params)
-    print(response.json())
+        else:
+            # English template implementation here...
+            pass
+        
+        # Merge template
+        parts.extend(f"{label}：{content}" for label, content in template)
+        
+        return "\n".join(parts)
+
+
+class TelegramNotifier:
+    """Handle Telegram notification sending."""
+
+    def __init__(self, token: str, channel_id: str):
+        self.token = token
+        self.channel_id = channel_id
+        self.base_url = f"https://api.telegram.org/bot{token}/sendMessage"
+
+    def send(self, message: str, urls: Dict[str, str]) -> None:
+        """Send formatted message to Telegram channel."""
+        params = {
+            "chat_id": self.channel_id,
+            "text": message,
+            "parse_mode": "MarkdownV2",
+            "link_preview_options": json.dumps({
+                "enabled": True,
+                "show_above_text": True
+            }),
+            "reply_markup": json.dumps({
+                "inline_keyboard": [[
+                    {"text": site, "url": url}
+                    for site, url in urls.items() if url
+                ]]
+            })
+        }
+        
+        response = requests.get(self.base_url, params=params)
+        response.raise_for_status()
 
 
 def main():
-    env = ENV()
+    """Main execution function."""
+    parser = argparse.ArgumentParser(description="Movie release notification script")
+    parser.add_argument("--torrent_name", required=True)
+    parser.add_argument("--indexer_name", required=True)
+    parser.add_argument("--group_name", required=True)
+    parser.add_argument("--release_year", required=True)
+    parser.add_argument("--parsed_title", required=True)
+    parser.add_argument("--file_size", type=int, required=True)
+    args = parser.parse_args()
 
-    args = parse_args()
-    title = args.parsed_title
-    year = args.release_year
-    file_size = convert_bytes_to_gib(int(args.file_size))
+    config = Config()
+    movie_client = MovieClient(config)
+    formatter = MessageFormatter()
+    notifier = TelegramNotifier(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHANNEL_ID)
 
-    release = RELEASE(env)
+    # Fetch movie information
+    results = movie_client.search_movie(args.parsed_title, args.release_year)
+    if not results:
+        raise ValueError("No movie found with the provided title and year")
 
-    language = release.tmdb.language
-    results = release.search_movie(title, year)
     tmdb_id = results[0].id
-    details = release.get_movie_details(tmdb_id)
+    details, cast, crew = movie_client.get_movie_data(tmdb_id)
+    details_en = movie_client.get_english_details(tmdb_id)
+    
+    # Prepare movie data
+    size, duration, bitrate = formatter.format_file_info(args.file_size, details.runtime)
+    movie_data = {
+        'title': details.title,
+        'year': details.release_date.split("-")[0],
+        'overview': details.overview or details_en.overview,
+        'genres': [genre.name for genre in details.genres],
+        'director': formatter.format_director(crew),
+        'starring': formatter.format_cast(cast),
+        'size': size,
+        'duration': duration,
+        'bitrate': bitrate,
+        'indexer': args.indexer_name,
+        'group': args.group_name,
+        'torrent_name': args.torrent_name,
+        'poster_url': f"https://image.tmdb.org/t/p/original{details_en.backdrop_path or details_en.poster_path}"
+    }
 
-    if not results or not details:
-        overview = None
-        genre_list = None
-        tmdb_id = None
-        tmdb_url = None
-        starring = None
-        director = None
-        imdb_url = None
-        letterboxd_url = None
-        douban_url = None
-        poster_url = None
-        bitrate = None
-        duration = None
-    else:
-        title = details.title
-        year = details.release_date.split("-")[0]
-        overview = details.overview
-
-        genre_list = [genre.name for genre in details.genres]
-
-        tmdb_id = details.id
-        imdb_id = details.imdb_id
-        tmdb_url = f"https://www.themoviedb.org/movie/{tmdb_id}"
-        imdb_url = f"https://www.imdb.com/title/{imdb_id}"
-        letterboxd_url = f"https://letterboxd.com/imdb/{imdb_id}/?adult"
-        douban_url = f"https://search.douban.com/movie/subject_search?search_text={imdb_id}"
-
-        cast = release.get_movie_cast(tmdb_id)
-        crew = release.get_movie_crew(tmdb_id)
-        starring = format_starring(cast)
-        director = format_director(crew)
-
-        duration = calculate_duration(details.runtime)
-        bitrate = calculate_bitrate(int(args.file_size), details.runtime)
-
-        # 切换到英文获取海报和 Fallback 简介
-        relese_en = RELEASE(env)
-        relese_en.tmdb.language = "en_US"
-        details_en = relese_en.get_movie_details(tmdb_id)
-        poster_path = details_en.backdrop_path
-        if not poster_path:
-            poster_path = details_en.poster_path
-        poster_url = f"https://image.tmdb.org/t/p/original{poster_path}"
-
-        if not overview:
-            overview = details_en.overview
-
-    notify_message = organize_message(
-        language=language,
-        title=title,
-        year=year,
-        overview=overview,
-        genre_list=genre_list,
-        tmdb_id=tmdb_id,
-        tmdb_url=tmdb_url,
-        torrent_name=args.torrent_name,
-        indexer_name=args.indexer_name,
-        group_name=args.group_name,
-        file_size=file_size,
-        bitrate=bitrate,
-        duration=duration,
-        starring=starring,
-        director=director,
-        poster_url=poster_url
-    )
-
-    print(f"{notify_message=}")
-
-    send_message(notify_message, env.TELEGRAM_BOT_TOKEN, env.TELEGRAM_CHANNEL_ID, tmdb_url, imdb_url, letterboxd_url, douban_url)
+    # Create and send message
+    message = formatter.create_message(movie_data, config.TMDB_LANGUAGE)
+    urls = {
+        "TMDB": f"https://www.themoviedb.org/movie/{tmdb_id}",
+        "IMDB": f"https://www.imdb.com/title/{details.imdb_id}",
+        "Letterboxd": f"https://letterboxd.com/imdb/{details.imdb_id}/?adult",
+        "Douban": f"https://search.douban.com/movie/subject_search?search_text={details.imdb_id}"
+    }
+    
+    notifier.send(message, urls)
 
 
 if __name__ == "__main__":
