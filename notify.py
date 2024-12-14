@@ -136,22 +136,22 @@ class MessageFormatter:
         # Main content
         if language == "zh-CN":
             template = [
-                ("*名称*", f"{movie_data['title']} \\({movie_data['year']}\\)"),
-                ("*导演*", self.escape_special_chars(movie_data['director'])),
-                ("*演员*", self.escape_special_chars(movie_data['starring'])),
-                ("*类型*", ", ".join(movie_data['genres'])),
-                ("*标题*", f"__{self.escape_special_chars(movie_data['torrent_name'])}__"),
-                ("*信息*", f"{self.escape_special_chars(movie_data['size'])} / "
+                ("*名称*：", f"{movie_data['title']} \\({movie_data['year']}\\)"),
+                ("*导演*：", self.escape_special_chars(movie_data['director'])),
+                ("*演员*：", self.escape_special_chars(movie_data['starring'])),
+                ("*类型*：", ", ".join(movie_data['genres'])),
+                ("*标题*：", f"__{self.escape_special_chars(movie_data['torrent_name'])}__"),
+                ("*信息*：", f"{self.escape_special_chars(movie_data['size'])} / "
                         f"{self.escape_special_chars(movie_data['duration'])} / "
                         f"{self.escape_special_chars(movie_data['bitrate'])}[​​​​​​​​​​​]({movie_data['poster_url']})"),
-                ("*简介*", f"\n> {self.escape_special_chars(movie_data['overview'])}")
+                ("\n", f"> {self.escape_special_chars(movie_data['overview'])}")
             ]
         else:
             # English template implementation here...
             pass
         
         # Merge template
-        parts.extend(f"{label}：{content}" for label, content in template)
+        parts.extend(f"{label}{content}" for label, content in template)
         
         return "\n".join(parts)
 
