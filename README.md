@@ -4,7 +4,7 @@ A Python script that sends formatted movie release notifications to Telegram cha
 
 ## Demo
 
-![image](https://img.lkwplus.com/alYNMCdAShg6aXub.jpg)
+<img src="https://img.lkwplus.com/6lZeGs7XIQT2w80H.webp" alt="image" style="width: 45%;">
 
 ## Features
 
