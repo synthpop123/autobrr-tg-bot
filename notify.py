@@ -61,6 +61,26 @@ class MovieClient:
         return self.search.movies(title, year=year) if year else self.search.movies(title)
 
     @lru_cache(maxsize=128)
+    def find_movie_by_imdb_id(self, imdb_id: str) -> Optional[Any]:
+        """Find movie by IMDB ID using TMDB's find endpoint."""
+        try:
+            url = f"https://api.themoviedb.org/3/find/{imdb_id}"
+            params = {
+                'api_key': self.tmdb.api_key,
+                'external_source': 'imdb_id'
+            }
+            response = self.session.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            if data.get('movie_results'):
+                return data['movie_results'][0]
+            return None
+        except Exception as e:
+            print(f"Error finding movie by IMDB ID {imdb_id}: {e}")
+            return None
+
+    @lru_cache(maxsize=128)
     def get_movie_details(self, tmdb_id: int, language: str = None) -> Any:
         """Get detailed information for a specific movie with caching."""
         if language:
@@ -195,6 +215,7 @@ def main():
     parser.add_argument("--release_year", required=True)
     parser.add_argument("--parsed_title", required=True)
     parser.add_argument("--file_size", type=int, required=True)
+    parser.add_argument("--meta_imdb", required=False, help="Optional IMDB ID for direct lookup")
     args = parser.parse_args()
 
     config = Config()
@@ -203,11 +224,18 @@ def main():
     notifier = TelegramNotifier(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHANNEL_ID)
 
     # Fetch movie information
-    results = movie_client.search_movie(args.parsed_title, args.release_year)
-    if not results:
-        raise ValueError("No movie found with the provided title and year")
-
-    tmdb_id = results[0].id
+    if args.meta_imdb:
+        # Use IMDB ID to find TMDB ID
+        movie_result = movie_client.find_movie_by_imdb_id(args.meta_imdb)
+        if not movie_result:
+            raise ValueError(f"No movie found with IMDB ID: {args.meta_imdb}")
+        tmdb_id = movie_result['id']
+    else:
+        # Use title and year search
+        results = movie_client.search_movie(args.parsed_title, args.release_year)
+        if not results:
+            raise ValueError("No movie found with the provided title and year")
+        tmdb_id = results[0].id
     details, cast, crew = movie_client.get_movie_data(tmdb_id)
     details_en = movie_client.get_english_details(tmdb_id)
     
