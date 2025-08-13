@@ -18,9 +18,9 @@ log_message "----------------------------------------"
 log_message "Script started"
 
 # Required parameters check
-if [ $# -ne 6 ]; then
+if [ $# -lt 6 ] || [ $# -gt 7 ]; then
     log_message "Error: Invalid number of parameters"
-    echo "Usage: $0 <bot_token> <channel_id> <torrent_name> <indexer_name> <group_name> <release_year> <parsed_title> <file_size>"
+    echo "Usage: $0 <torrent_name> <indexer_name> <group_name> <release_year> <parsed_title> <file_size> [meta_imdb]"
     exit 1
 fi
 
@@ -30,6 +30,7 @@ group_name=$3
 release_year=$4 
 parsed_title=$5
 file_size=$6
+meta_imdb=$7
 
 # Log received parameters
 log_message "Parameters received:"
@@ -39,12 +40,25 @@ log_message "Group: $group_name"
 log_message "Year: $release_year"
 log_message "Title: $parsed_title"
 log_message "Size: $file_size"
+if [ -n "$meta_imdb" ]; then
+    log_message "Meta IMDB: $meta_imdb"
+fi
 
 # Run notify.py
-if python3 notify.py --torrent_name "$torrent_name" --indexer_name "$indexer_name" --group_name "$group_name" --release_year "$release_year" --parsed_title "$parsed_title" --file_size "$file_size"; then
-    log_message "Python script executed successfully"
+if [ -n "$meta_imdb" ]; then
+    # Run with meta_imdb parameter
+    if python3 notify.py --torrent_name "$torrent_name" --indexer_name "$indexer_name" --group_name "$group_name" --release_year "$release_year" --parsed_title "$parsed_title" --file_size "$file_size" --meta_imdb "$meta_imdb"; then
+        log_message "Python script executed successfully with IMDB ID"
+    else
+        log_message "Error: Python script execution failed with IMDB ID"
+    fi
 else
-    log_message "Error: Python script execution failed"
+    # Run without meta_imdb parameter
+    if python3 notify.py --torrent_name "$torrent_name" --indexer_name "$indexer_name" --group_name "$group_name" --release_year "$release_year" --parsed_title "$parsed_title" --file_size "$file_size"; then
+        log_message "Python script executed successfully"
+    else
+        log_message "Error: Python script execution failed"
+    fi
 fi
 
 # Log script end
