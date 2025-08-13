@@ -225,11 +225,16 @@ def main():
 
     # Fetch movie information
     if args.meta_imdb:
-        # Use IMDB ID to find TMDB ID
+        # Use IMDB ID to find TMDB ID, fallback to title+year if not found
         movie_result = movie_client.find_movie_by_imdb_id(args.meta_imdb)
-        if not movie_result:
-            raise ValueError(f"No movie found with IMDB ID: {args.meta_imdb}")
-        tmdb_id = movie_result['id']
+        if movie_result:
+            tmdb_id = movie_result['id']
+        else:
+            print(f"IMDB ID {args.meta_imdb} not found, falling back to title and year search")
+            results = movie_client.search_movie(args.parsed_title, args.release_year)
+            if not results:
+                raise ValueError(f"No movie found with IMDB ID: {args.meta_imdb} or title/year: {args.parsed_title} ({args.release_year})")
+            tmdb_id = results[0].id
     else:
         # Use title and year search
         results = movie_client.search_movie(args.parsed_title, args.release_year)
